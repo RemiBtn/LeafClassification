@@ -10,6 +10,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 from sklearn.preprocessing import LabelEncoder
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+import time
 
 # Load labels from CSV
 labels_df = pd.read_csv('data/train.csv')
@@ -47,23 +49,36 @@ class LeafDataset(Dataset):
         else:
             return image
 
-# CNN Model Definition
-class CNN(nn.Module):
-    def __init__(self, num_classes):
-        super(CNN, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(64 * 32 * 32, 600)
-        self.fc2 = nn.Linear(600, num_classes)
-        self.relu = nn.ReLU()
+class CNNModel(nn.Module):
+    def __init__(self):
+        super(CNNModel, self).__init__()
+
+        self.cnn = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=7, stride=1, padding=3),
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(256),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Flatten(),
+            nn.Linear(256*8*8*4, 256),
+            nn.ReLU(),
+            nn.Linear(256, 99),
+
+        )
+
 
     def forward(self, x):
-        x = self.pool(self.relu(self.conv1(x)))
-        x = self.pool(self.relu(self.conv2(x)))
-        x = x.view(-1, 64 * 32 * 32)
-        x = self.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = self.cnn(x)
         return x
 
         
@@ -76,7 +91,7 @@ transform = transforms.Compose([
 # Split data into labeled and unlabeled sets
 image_directory = 'data/images'
 train_images = list(label_dict.keys())
-test_images = [img for img in os.listdir(image_directory) if img not in train_images and img.endswith('.jpg')]  # Adjust file extension if needed
+test_images = [img for img in os.listdir(image_directory) if img not in train_images and img.endswith('.jpg')] 
 
 # Further split training images into training and validation sets
 train_images, val_images = train_test_split(train_images, test_size=0.2, random_state=42)
@@ -91,39 +106,61 @@ val_dataset = LeafDataset(image_directory, val_label_dict, transform=transform)
 test_dataset = LeafDataset(image_directory, transform=transform)
 
 # Data loaders
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
 
 # Model, Loss, Optimizer
-model = CNN(num_classes=len(label_encoder.classes_))
+model = CNNModel()
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=3e-5, weight_decay=0.1)
 
+writer = SummaryWriter('runs/cnn+features/'+time.strftime("%Y%m%d-%H%M%S"))
 
-# Training Loop with Validation
-num_epochs = 10
+num_epochs = 50
 for epoch in range(num_epochs):
     # Training loop
     model.train()
+    correct_predictions_train = 0
+    train_loss = 0
     for images, labels in train_loader:
         outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+        correct_predictions_train += (predicted == labels).sum().item()
         loss = criterion(outputs, labels)
+        train_loss += loss.item()
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    print(f'Epoch {epoch+1}/{num_epochs}, Loss: {loss.item()}')
+    train_accuracy = correct_predictions_train/len(train_dataset)
+    print(f'Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss / len(train_dataset)}, Train accuracy: {train_accuracy}')
 
     # Validation loop
     model.eval()
+    correct_predictions_val = 0
     val_loss = 0
+    best_val_accuracy = 0
     with torch.no_grad():
         for images, labels in val_loader:
             outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+            correct_predictions_val += (predicted == labels).sum().item()
             loss = criterion(outputs, labels)
             val_loss += loss.item()
-    print(f'Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss / len(val_loader)}')
+    val_accuracy = correct_predictions_val/len(val_dataset)
+    print(f'Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss / len(val_dataset)}, Validation accuracy: {val_accuracy}')
+
+    if val_accuracy > best_val_accuracy:
+        best_val_accuracy =val_accuracy
+        best_model_weights = model.state_dict().copy()
+        torch.save(model.state_dict(), f'best_model.pth')
+        print(f'Saved model of epoch {epoch}')
+
+    writer.add_scalar('Training Loss', train_loss/len(train_dataset), epoch)
+    writer.add_scalar('Validation Loss', val_loss/len(val_dataset), epoch)
+    writer.add_scalar('Training Accuracy', train_accuracy, epoch)
+    writer.add_scalar('Validation Accuracy', val_accuracy, epoch)
 
 # Load test.csv to get the list of test image IDs
 test_csv_path = 'data/test.csv'
@@ -135,6 +172,9 @@ model.eval()  # Set the model to evaluation mode
 
 # Initialize list to store DataFrame rows
 rows_list = []
+
+# Use the best model weights for test set
+model.load_state_dict(torch.load('best_model.pth'))
 
 # Process each test image and make predictions
 for image_id in test_image_ids:
@@ -158,5 +198,4 @@ submission_df = pd.DataFrame(rows_list, columns=['id'] + species.tolist())
 # Save submission to CSV
 submission_csv_path = 'data/submission.csv'
 submission_df.to_csv(submission_csv_path, index=False)
-
-submission_csv_path
+print('Submission done')
