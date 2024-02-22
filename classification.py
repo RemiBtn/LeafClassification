@@ -122,7 +122,10 @@ test_images = [
 
 # Further split training images into training and validation sets
 train_images, val_images = train_test_split(
-    train_images, test_size=0.2, random_state=42
+    train_images,
+    test_size=0.2,
+    random_state=42,
+    stratify=label_encoder.transform(labels_df["species"]),
 )
 
 # Create label dictionaries for train and validation sets
