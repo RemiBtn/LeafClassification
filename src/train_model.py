@@ -27,7 +27,13 @@ def build_dirname(
     else:
         dirname = os.path.join(input_type, name)
 
-    return dirname
+    ext = ""
+    cnt = 1
+    while os.path.exists(os.path.join("..", "runs", "metrics", dirname + ext)):
+        cnt += 1
+        ext = f"_{cnt}"
+
+    return dirname + ext
 
 
 def training_loop(
