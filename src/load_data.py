@@ -82,7 +82,12 @@ def build_tensor_dataset(df: pd.DataFrame, img_size: int = 128) -> TensorDataset
         labels = torch.tensor(df["species"].values, dtype=torch.int64)
         dataset = TensorDataset(images, features, labels)
     else:
-        dataset = TensorDataset(images, features)
+        samples_ids = [
+            int(os.path.splitext(os.path.basename(img_path))[0])
+            for img_path in df["id"].values
+        ]
+        sample_ids = torch.tensor(samples_ids, dtype=torch.int64)
+        dataset = TensorDataset(images, features, sample_ids)
 
     return dataset
 
@@ -92,10 +97,10 @@ def get_data_loaders(
     img_size: int = 128,
     test_batch_size: int = 1024,
     *,
-    data_dir: str = "data",
+    data_dir: str = "../data",
     test_size: float | int | None = 0.2,
     random_state: int = 42,
-) -> tuple[DataLoader, DataLoader, DataLoader, np.array]:
+) -> tuple[DataLoader, DataLoader, DataLoader, np.ndarray]:
     train_df, val_df, test_df, species = load_csv(
         data_dir, test_size=test_size, random_state=random_state
     )
