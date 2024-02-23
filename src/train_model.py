@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from load_data import get_data_loaders
+from models import MixedInputModel
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -122,7 +123,7 @@ def train_model(
     optimizer: optim.Optimizer,
     train_loader: DataLoader,
     val_loader: DataLoader,
-    num_epochs: int = 50,
+    num_epochs: int = 100,
     *,
     criterion=nn.CrossEntropyLoss(),
     dirname: str | None = None,
@@ -137,9 +138,9 @@ def train_model(
     model = model.to(device)
     best_val_accuracy = -1
 
-    for epoch in range(num_epochs):
+    for epoch in range(1, num_epochs + 1):
         print()
-        print(f"Epoch {epoch + 1:>3d}/{num_epochs}")
+        print(f"Epoch {epoch:>3d}/{num_epochs}")
         time.sleep(0.01)  # avoid display issues with tqdm
 
         train_loss, train_accuracy = training_loop(
@@ -155,7 +156,7 @@ def train_model(
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             torch.save(model.state_dict(), model_path)
-            print(f"Saved model at epoch {epoch + 1}.")
+            print(f"Saved model at epoch {epoch}.")
 
     best_model_state = torch.load(model_path)
     model.load_state_dict(best_model_state)
@@ -209,40 +210,15 @@ def make_submission_csv(
     print(f"Submission saved in {submission_csv_path}.")
 
 
-class CNNModel(nn.Module):
-    def __init__(self):
-        super(CNNModel, self).__init__()
-
-        self.cnn = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=7, stride=1, padding=3),
-            nn.ReLU(),
-            nn.BatchNorm2d(64),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
-            nn.BatchNorm2d(128),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.BatchNorm2d(256),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Flatten(),
-            nn.Linear(256 * 8 * 8 * 4, 256),
-            nn.ReLU(),
-            nn.Linear(256, 99),
-        )
-
-    def forward(self, x, _):
-        x = self.cnn(x)
-        return x
-
-
 def main():
-    dirname = build_dirname()
+    name = "1_layer_features+resnet-3_layers"
+    input_type = "image_and_features"
+
+    dirname = build_dirname(name, input_type)
     train_loader, val_loader, test_loader, species = get_data_loaders()
-    model = CNNModel()
-    optimizer = optim.Adam(model.parameters(), lr=3e-5, weight_decay=0.1)
-    model = train_model(model, optimizer, train_loader, val_loader, 5, dirname=dirname)
+    model = MixedInputModel()
+    optimizer = optim.AdamW(model.parameters())
+    model = train_model(model, optimizer, train_loader, val_loader, dirname=dirname)
     make_submission_csv(model, test_loader, species, dirname)
 
 

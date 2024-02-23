@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms as transforms
+import torchvision.transforms.v2 as v2
 from PIL import Image
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -60,12 +60,12 @@ def square_image(img: torch.Tensor) -> torch.Tensor:
 
 
 def build_tensor_dataset(df: pd.DataFrame, img_size: int = 128) -> TensorDataset:
-    preprocessing = transforms.Compose(
+    preprocessing = v2.Compose(
         [
             Image.open,
-            transforms.PILToTensor(),
+            v2.PILToTensor(),
             square_image,
-            transforms.Resize((img_size, img_size)),
+            v2.Resize((img_size, img_size)),
         ]
     )
     feature_names = (
@@ -92,8 +92,30 @@ def build_tensor_dataset(df: pd.DataFrame, img_size: int = 128) -> TensorDataset
     return dataset
 
 
+def collate_fn_factory(transform):
+    def collate_fn(batch):
+        images = []
+        features = []
+        labels = []
+
+        for img, feat, lab in batch:
+            img = transform(img)
+            images.append(img)
+            features.append(feat)
+            labels.append(lab)
+
+        images = torch.stack(images)
+        features = torch.stack(features)
+        labels = torch.stack(labels)
+
+        return images, features, labels
+
+    return collate_fn
+
+
 def get_data_loaders(
     train_batch_size: int = 64,
+    data_augmentation: bool = True,
     img_size: int = 128,
     test_batch_size: int = 1024,
     *,
@@ -109,8 +131,23 @@ def get_data_loaders(
     val_dataset = build_tensor_dataset(val_df, img_size)
     test_dataset = build_tensor_dataset(test_df, img_size)
 
+    if data_augmentation:
+        transform = v2.Compose(
+            [
+                v2.RandomHorizontalFlip(),
+                v2.RandomVerticalFlip(),
+                v2.RandomAffine(20, scale=(0.9, 1.05)),
+            ]
+        )
+        collate_fn = collate_fn_factory(transform)
+    else:
+        collate_fn = None
     train_data_loader = DataLoader(
-        train_dataset, train_batch_size, shuffle=True, drop_last=True
+        train_dataset,
+        train_batch_size,
+        shuffle=True,
+        drop_last=True,
+        collate_fn=collate_fn,
     )
     val_data_loader = DataLoader(val_dataset, test_batch_size)
     test_data_loader = DataLoader(test_dataset, test_batch_size)
