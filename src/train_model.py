@@ -7,11 +7,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import tqdm
+from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from load_data import get_data_loaders
-from models import MixedInputModel
+from models import LightModel, MixedInputModel
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -129,6 +130,7 @@ def train_model(
     optimizer: optim.Optimizer,
     train_loader: DataLoader,
     val_loader: DataLoader,
+    scheduler: LRScheduler | None = None,
     num_epochs: int = 100,
     *,
     criterion=nn.CrossEntropyLoss(),
@@ -159,10 +161,13 @@ def train_model(
         writer.add_scalar("Training Accuracy", train_accuracy, epoch)
         writer.add_scalar("Validation Accuracy", val_accuracy, epoch)
 
-        if val_accuracy > best_val_accuracy:
+        if val_accuracy >= best_val_accuracy:
             best_val_accuracy = val_accuracy
             torch.save(model.state_dict(), model_path)
             print(f"Saved model at epoch {epoch}.")
+
+        if scheduler is not None:
+            scheduler.step()
 
     best_model_state = torch.load(model_path)
     model.load_state_dict(best_model_state)
@@ -221,10 +226,25 @@ def main():
     input_type = "image_and_features"
 
     dirname = build_dirname(name, input_type)
-    train_loader, val_loader, test_loader, species = get_data_loaders()
-    model = MixedInputModel()
+    train_loader, val_loader, test_loader, species = get_data_loaders(32)
+    model = LightModel()
     optimizer = optim.AdamW(model.parameters())
-    model = train_model(model, optimizer, train_loader, val_loader, dirname=dirname)
+    scheduler = LambdaLR(
+        optimizer,
+        lambda epoch: (epoch <= 10)
+        + 0.4 * (10 < epoch <= 75)
+        + 0.08 * (75 < epoch <= 150)
+        + 0.02 * (150 < epoch),
+    )
+    model = train_model(
+        model,
+        optimizer,
+        train_loader,
+        val_loader,
+        scheduler,
+        num_epochs=300,
+        dirname=dirname,
+    )
     make_submission_csv(model, test_loader, species, dirname)
 
 

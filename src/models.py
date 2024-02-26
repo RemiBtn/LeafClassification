@@ -67,3 +67,43 @@ class MixedInputModel(nn.Module):
         x_mixed = torch.cat([x_image, x_features], 1)
         x_mixed = self.dropout(x_mixed)
         return self.mlp(x_mixed)
+
+
+class LightModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.GELU(),
+            nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.GELU(),
+            nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.GELU(),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.GELU(),
+            nn.Conv2d(32, 32, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.GELU(),
+            nn.Conv2d(32, 32, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.GELU(),
+            nn.Conv2d(32, 32, kernel_size=3, bias=False),
+            nn.BatchNorm2d(32),
+            nn.GELU(),
+        )
+        self.mlp = nn.Sequential(
+            nn.Linear(320, 128, False),
+            nn.BatchNorm1d(128),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 99),
+        )
+
+    def forward(self, image: torch.Tensor, features: torch.Tensor):
+        x_image = torch.flatten(self.cnn(image), 1)
+        x_mixed = torch.cat([x_image, features], 1)
+        return self.mlp(x_mixed)
