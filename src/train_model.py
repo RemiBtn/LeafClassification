@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import time
 
@@ -10,9 +11,11 @@ import tqdm
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.model_selection import KFold
 
 from load_data import get_data_loaders
 from models import LightModel, MixedInputModel
+from typing import List, Union
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -126,15 +129,14 @@ def validation_loop(
 
 def train_model(
     model: nn.Module,
-    /,
     optimizer: optim.Optimizer,
-    train_loader: DataLoader,
-    val_loader: DataLoader,
-    scheduler: LRScheduler | None = None,
+    train_loaders: Union[DataLoader, List[DataLoader]],
+    val_loaders: Union[DataLoader, List[DataLoader]],
+    scheduler: optim.lr_scheduler._LRScheduler | None = None,
     num_epochs: int = 100,
-    *,
     criterion=nn.CrossEntropyLoss(),
     dirname: str | None = None,
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 ) -> nn.Module:
     if dirname is None:
         dirname = time.strftime("%Y%m%d-%H%M%S")
@@ -146,28 +148,63 @@ def train_model(
     model = model.to(device)
     best_val_accuracy = -1
 
-    for epoch in range(1, num_epochs + 1):
-        print()
-        print(f"Epoch {epoch:>3d}/{num_epochs}")
-        time.sleep(0.01)  # avoid display issues with tqdm
+    if isinstance(train_loaders, DataLoader):
+        train_loaders = [train_loaders]
+        val_loaders = [val_loaders]
 
-        train_loss, train_accuracy = training_loop(
-            model, optimizer, train_loader, criterion
-        )
-        val_loss, val_accuracy = validation_loop(model, val_loader, criterion)
+    total_train_loss, total_val_loss, total_train_accuracy, total_val_accuracy = 0, 0, 0, 0
 
-        writer.add_scalar("Training Loss", train_loss, epoch)
-        writer.add_scalar("Validation Loss", val_loss, epoch)
-        writer.add_scalar("Training Accuracy", train_accuracy, epoch)
-        writer.add_scalar("Validation Accuracy", val_accuracy, epoch)
+    for fold, (train_loader, val_loader) in enumerate(zip(train_loaders, val_loaders)):
+        fold_train_loss, fold_val_loss, fold_train_accuracy, fold_val_accuracy = 0, 0, 0, 0
+        
+        for epoch in range(1, num_epochs + 1):
+            train_loss, train_accuracy = training_loop(
+                model, optimizer, train_loader, criterion
+            )
+            val_loss, val_accuracy = validation_loop(
+                model, val_loader, criterion
+            )
 
-        if val_accuracy >= best_val_accuracy:
-            best_val_accuracy = val_accuracy
-            torch.save(model.state_dict(), model_path)
-            print(f"Saved model at epoch {epoch}.")
+            fold_train_loss += train_loss
+            fold_train_accuracy += train_accuracy
+            fold_val_loss += val_loss
+            fold_val_accuracy += val_accuracy
+            
+            if scheduler is not None:
+                scheduler.step()
 
-        if scheduler is not None:
-            scheduler.step()
+            if val_accuracy > best_val_accuracy:
+                best_val_accuracy = val_accuracy
+                torch.save(model.state_dict(), model_path)
+
+        # Calcul et enregistrement des moyennes du pli
+        num_epochs_float = float(num_epochs)
+        fold_train_loss /= num_epochs_float
+        fold_train_accuracy /= num_epochs_float
+        fold_val_loss /= num_epochs_float
+        fold_val_accuracy /= num_epochs_float
+
+        total_train_loss += fold_train_loss
+        total_train_accuracy += fold_train_accuracy
+        total_val_loss += fold_val_loss
+        total_val_accuracy += fold_val_accuracy
+
+        writer.add_scalar(f"Fold_{fold+1}/Average Training Loss", fold_train_loss, fold+1)
+        writer.add_scalar(f"Fold_{fold+1}/Average Training Accuracy", fold_train_accuracy, fold+1)
+        writer.add_scalar(f"Fold_{fold+1}/Average Validation Loss", fold_val_loss, fold+1)
+        writer.add_scalar(f"Fold_{fold+1}/Average Validation Accuracy", fold_val_accuracy, fold+1)
+
+    # Calcul des moyennes globales sur tous les plis
+    num_folds_float = float(len(train_loaders))
+    avg_train_loss = total_train_loss / num_folds_float
+    avg_train_accuracy = total_train_accuracy / num_folds_float
+    avg_val_loss = total_val_loss / num_folds_float
+    avg_val_accuracy = total_val_accuracy / num_folds_float
+
+    writer.add_scalar("Global/Average Training Loss", avg_train_loss, 0)
+    writer.add_scalar("Global/Average Training Accuracy", avg_train_accuracy, 0)
+    writer.add_scalar("Global/Average Validation Loss", avg_val_loss, 0)
+    writer.add_scalar("Global/Average Validation Accuracy", avg_val_accuracy, 0)
 
     best_model_state = torch.load(model_path)
     model.load_state_dict(best_model_state)
@@ -226,7 +263,7 @@ def main():
     input_type = "image_and_features"
 
     dirname = build_dirname(name, input_type)
-    train_loader, val_loader, test_loader, species = get_data_loaders(32)
+    train_loader, val_loader, test_loader, species = get_data_loaders(32, use_k_fold=True, n_splits= 5)
     model = LightModel()
     optimizer = optim.AdamW(model.parameters())
     scheduler = LambdaLR(
@@ -242,7 +279,7 @@ def main():
         train_loader,
         val_loader,
         scheduler,
-        num_epochs=300,
+        num_epochs=25,
         dirname=dirname,
     )
     make_submission_csv(model, test_loader, species, dirname)

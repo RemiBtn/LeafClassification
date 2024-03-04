@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 
 import numpy as np
@@ -5,9 +6,9 @@ import pandas as pd
 import torch
 import torchvision.transforms.v2 as v2
 from PIL import Image
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Subset, ConcatDataset
 
 
 def load_csv(
@@ -122,34 +123,60 @@ def get_data_loaders(
     data_dir: str = "../data",
     test_size: float | int | None = 0.2,
     random_state: int = 42,
+    use_k_fold: bool = False,
+    n_splits: int = 5,
 ) -> tuple[DataLoader, DataLoader, DataLoader, np.ndarray]:
     train_df, val_df, test_df, species = load_csv(
         data_dir, test_size=test_size, random_state=random_state
     )
 
+    # Préparation des datasets
     train_dataset = build_tensor_dataset(train_df, img_size)
     val_dataset = build_tensor_dataset(val_df, img_size)
     test_dataset = build_tensor_dataset(test_df, img_size)
 
     if data_augmentation:
-        transform = v2.Compose(
-            [
-                v2.RandomHorizontalFlip(),
-                v2.RandomVerticalFlip(),
-                v2.RandomAffine(20, scale=(0.9, 1.05)),
-            ]
-        )
+        transform = v2.Compose([
+            v2.RandomHorizontalFlip(),
+            v2.RandomVerticalFlip(),
+            v2.RandomAffine(20, scale=(0.9, 1.05)),
+        ])
         collate_fn = collate_fn_factory(transform)
     else:
         collate_fn = None
-    train_data_loader = DataLoader(
-        train_dataset,
-        train_batch_size,
-        shuffle=True,
-        drop_last=True,
-        collate_fn=collate_fn,
-    )
-    val_data_loader = DataLoader(val_dataset, test_batch_size)
-    test_data_loader = DataLoader(test_dataset, test_batch_size)
+    
+    if use_k_fold:
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+        train_loaders = []
+        val_loaders = []
 
-    return train_data_loader, val_data_loader, test_data_loader, species
+        for train_idx, val_idx in kf.split(train_df):
+            train_subset = Subset(train_dataset, train_idx)
+            val_subset = Subset(val_dataset, val_idx)
+            print("Taille du pli d'entraînement:", len(train_subset))
+            print("Taille du pli de validation:", len(train_subset))
+
+            train_loader = DataLoader(
+                train_subset,
+                batch_size=train_batch_size,
+                shuffle=True,
+                drop_last=True,
+                collate_fn=collate_fn,
+            )
+            val_loader = DataLoader(val_subset, batch_size=test_batch_size)
+            train_loaders.append(train_loader)
+            val_loaders.append(val_loader)
+        
+        test_data_loader = DataLoader(test_dataset, batch_size=test_batch_size)
+        return train_loaders, val_loaders, test_data_loader, species
+    else:
+        train_data_loader = DataLoader(
+            train_dataset,
+            batch_size=train_batch_size,
+            shuffle=True,
+            drop_last=True,
+            collate_fn=collate_fn,
+        )
+        val_data_loader = DataLoader(val_dataset, test_batch_size)
+        test_data_loader = DataLoader(test_dataset, test_batch_size)
+        return train_data_loader, val_data_loader, test_data_loader, species
