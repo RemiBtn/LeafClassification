@@ -1,6 +1,8 @@
+from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 
 
 class ResidualBlock(nn.Module):
@@ -70,7 +72,7 @@ class MixedInputModel(nn.Module):
 
 
 class LightModel(nn.Module):
-    def __init__(self):
+    def __init__(self, include_images=True, num_features=3*64):
         super().__init__()
         self.cnn = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1, bias=False),
@@ -95,15 +97,32 @@ class LightModel(nn.Module):
             nn.BatchNorm2d(32),
             nn.GELU(),
         )
+        self.include_images = include_images
+        self.num_features = num_features
+        self.output_cnn = 128 if include_images else 0
+        total_input_size = self.output_cnn + self.num_features
+
         self.mlp = nn.Sequential(
-            nn.Linear(320, 128, False),
+            nn.Linear(total_input_size, 128, False),
             nn.BatchNorm1d(128),
             nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(128, 99),
         )
+        
+    def forward(self, image=None, features=None):
+        x_mixed = []
 
-    def forward(self, image: torch.Tensor, features: torch.Tensor):
-        x_image = torch.flatten(self.cnn(image), 1)
-        x_mixed = torch.cat([x_image, features], 1)
+        if self.include_images and image is not None:
+            x_image = torch.flatten(self.cnn(image), start_dim=1)  # Assurez-vous que cette opération est correcte.
+            x_mixed.append(x_image)
+        
+        if features is not None:
+            # Assurez-vous que cette condition est bien gérée.
+            x_mixed.append(features)
+        
+        if not x_mixed:
+            raise ValueError("No inputs provided")
+        
+        x_mixed = torch.cat(x_mixed, dim=1) if len(x_mixed) > 1 else x_mixed[0]
         return self.mlp(x_mixed)

@@ -60,7 +60,7 @@ def square_image(img: torch.Tensor) -> torch.Tensor:
     return sq_img
 
 
-def build_tensor_dataset(df: pd.DataFrame, img_size: int = 128) -> TensorDataset:
+def build_tensor_dataset(df: pd.DataFrame, img_size: int = 128, include_images: bool = True, include_features: List[str] = None) -> TensorDataset:
     preprocessing = v2.Compose(
         [
             Image.open,
@@ -69,47 +69,78 @@ def build_tensor_dataset(df: pd.DataFrame, img_size: int = 128) -> TensorDataset
             v2.Resize((img_size, img_size)),
         ]
     )
-    feature_names = (
-        [f"margin{i}" for i in range(1, 65)]
-        + [f"shape{i}" for i in range(1, 65)]
-        + [f"texture{i}" for i in range(1, 65)]
-    )
 
-    images = [preprocessing(image_path) for image_path in df["id"]]
-    images = torch.stack(images)
-    features = torch.tensor(df[feature_names].values, dtype=torch.float32)
+    tensors = []
+    images = None
+    features = None
+    
+    if include_images:
+        images = torch.stack([preprocessing(image_path) for image_path in df["id"]])
+        tensors.append(images)
+
+    if include_features is not None:
+        feature_columns = df.columns.drop('id', errors='ignore')
+        features_to_include = []
+        for feature_category in include_features:
+            matched_features = [col for col in feature_columns if feature_category in col]
+            features_to_include.extend(matched_features)
+        features = torch.tensor(df[features_to_include].values, dtype=torch.float32)
+        tensors.append(features)
 
     if "species" in df.columns:
         labels = torch.tensor(df["species"].values, dtype=torch.int64)
-        dataset = TensorDataset(images, features, labels)
+        tensors.append(labels)
     else:
-        samples_ids = [
-            int(os.path.splitext(os.path.basename(img_path))[0])
-            for img_path in df["id"].values
-        ]
-        sample_ids = torch.tensor(samples_ids, dtype=torch.int64)
-        dataset = TensorDataset(images, features, sample_ids)
+        sample_ids = [int(os.path.splitext(os.path.basename(img_path))[0]) for img_path in df["id"].values]
+        sample_ids_tensor = torch.tensor(sample_ids, dtype=torch.int64)
+        tensors.append(sample_ids_tensor)
+
+    if not tensors:
+        raise ValueError("No valid tensors were created for the TensorDataset.")
+
+    dataset = TensorDataset(*tensors)
 
     return dataset
 
 
-def collate_fn_factory(transform):
+def collate_fn_factory(transform, include_images=True, include_features=['margin', 'shape', 'texture']):
     def collate_fn(batch):
-        images = []
-        features = []
-        labels = []
+        images, features, labels = [], [], []
 
-        for img, feat, lab in batch:
-            img = transform(img)
-            images.append(img)
-            features.append(feat)
-            labels.append(lab)
+        for elements in batch:
+            if include_images and include_features:
+                # Cas où les images et les caractéristiques tabulaires sont présentes
+                img, feat, lab = elements
+                if include_images:
+                    img = transform(img)
+                    images.append(img)
+                if include_features:
+                    features.append(feat)
+                labels.append(lab)
+            elif include_images:
+                # Cas où seulement les images sont présentes
+                img, lab = elements
+                img = transform(img)
+                images.append(img)
+                labels.append(lab)
+            elif include_features:
+                # Cas où seulement les caractéristiques tabulaires sont présentes
+                feat, lab = elements
+                features.append(feat)
+                labels.append(lab)
 
-        images = torch.stack(images)
-        features = torch.stack(features)
-        labels = torch.stack(labels)
+        # Construire les tenseurs à partir des listes
+        tensors = []
+        if include_images and images:
+            images_tensor = torch.stack(images)
+            tensors.append(images_tensor)
+        if include_features and features:
+            features_tensor = torch.stack(features)
+            tensors.append(features_tensor)
+        labels_tensor = torch.stack(labels)
+        tensors.append(labels_tensor)
 
-        return images, features, labels
+        return tuple(tensors)
 
     return collate_fn
 
@@ -123,17 +154,19 @@ def get_data_loaders(
     data_dir: str = "../data",
     test_size: float | int | None = 0.2,
     random_state: int = 42,
-    use_k_fold: bool = False,
+    use_k_fold: bool = True,
     n_splits: int = 5,
+    include_images: bool = True,
+    include_features: List[str] = ['margin', 'shape', 'texture']
 ) -> tuple[DataLoader, DataLoader, DataLoader, np.ndarray]:
     train_df, val_df, test_df, species = load_csv(
         data_dir, test_size=test_size, random_state=random_state
     )
 
     # Préparation des datasets
-    train_dataset = build_tensor_dataset(train_df, img_size)
-    val_dataset = build_tensor_dataset(val_df, img_size)
-    test_dataset = build_tensor_dataset(test_df, img_size)
+    train_dataset = build_tensor_dataset(train_df, img_size, include_images, include_features)
+    val_dataset = build_tensor_dataset(val_df, img_size, include_images, include_features)
+    test_dataset = build_tensor_dataset(test_df, img_size, include_images, include_features)
 
     if data_augmentation:
         transform = v2.Compose([
@@ -141,14 +174,14 @@ def get_data_loaders(
             v2.RandomVerticalFlip(),
             v2.RandomAffine(20, scale=(0.9, 1.05)),
         ])
-        collate_fn = collate_fn_factory(transform)
+        collate_fn = collate_fn_factory(transform, include_images=include_images, include_features=include_features)
     else:
         collate_fn = None
     
     if use_k_fold:
         train_df, _, test_df, species = load_csv(data_dir, test_size=None, random_state=random_state)
 
-        full_train_dataset = build_tensor_dataset(train_df, img_size)
+        full_train_dataset = build_tensor_dataset(train_df, img_size, include_images, include_features)
         
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         train_loaders = []
