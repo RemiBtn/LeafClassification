@@ -154,60 +154,55 @@ def train_model(
 
     total_train_loss, total_val_loss, total_train_accuracy, total_val_accuracy = 0, 0, 0, 0
 
-    for fold, (train_loader, val_loader) in enumerate(zip(train_loaders, val_loaders)):
-        fold_train_loss, fold_val_loss, fold_train_accuracy, fold_val_accuracy = 0, 0, 0, 0
+    # for name, param in model.named_parameters():
+    #     writer.add_histogram(f'Weights/{name}', param, 0)
+    #     if param.requires_grad:
+    #         # Les gradients sont None avant la première backward
+    #         if param.grad is not None:
+    #             writer.add_histogram(f'Gradients/{name}', param.grad, 0)
+
+    for epoch in range(1, num_epochs + 1):
+        epoch_train_loss, epoch_train_accuracy = 0.0, 0.0
+        epoch_val_loss, epoch_val_accuracy = 0.0, 0.0
         
-        for epoch in range(1, num_epochs + 1):
+        for fold, (train_loader, val_loader) in enumerate(zip(train_loaders, val_loaders)):
             train_loss, train_accuracy = training_loop(
-                model, optimizer, train_loader, criterion
-            )
+                model, optimizer, train_loader, criterion)
+            epoch_train_loss += train_loss
+            epoch_train_accuracy += train_accuracy
+
             val_loss, val_accuracy = validation_loop(
-                model, val_loader, criterion
-            )
-
-            fold_train_loss += train_loss
-            fold_train_accuracy += train_accuracy
-            fold_val_loss += val_loss
-            fold_val_accuracy += val_accuracy
+                model, val_loader, criterion)
+            epoch_val_loss += val_loss
+            epoch_val_accuracy += val_accuracy
             
-            if scheduler is not None:
-                scheduler.step()
+        epoch_train_loss /= len(train_loaders)
+        epoch_train_accuracy /= len(train_loaders)
+        epoch_val_loss /= len(val_loaders)
+        epoch_val_accuracy /= len(val_loaders)
+        
+        writer.add_scalar("Loss/Train", epoch_train_loss, epoch)
+        writer.add_scalar("Accuracy/Train", epoch_train_accuracy, epoch)
+        writer.add_scalar("Loss/Validation", epoch_val_loss, epoch)
+        writer.add_scalar("Accuracy/Validation", epoch_val_accuracy, epoch)
+        
+        print(f"Epoch {epoch}/{num_epochs} - Loss Train: {epoch_train_loss:.4f}, Acc Train: {epoch_train_accuracy:.4f}, Loss Val: {epoch_val_loss:.4f}, Acc Val: {epoch_val_accuracy:.4f}")
 
-            if val_accuracy > best_val_accuracy:
-                best_val_accuracy = val_accuracy
-                torch.save(model.state_dict(), model_path)
+        # if epoch%20==0:
+        #     for name, param in model.named_parameters():
+        #         writer.add_histogram(f'Weights/{name}', param, epoch)
+        #         if param.requires_grad:
+        #             # Assurez-vous que .grad n'est pas None après la backward
+        #             if param.grad is not None:
+        #                 writer.add_histogram(f'Gradients/{name}', param.grad, epoch)
 
-        # Calcul et enregistrement des moyennes du pli
-        num_epochs_float = float(num_epochs)
-        fold_train_loss /= num_epochs_float
-        fold_train_accuracy /= num_epochs_float
-        fold_val_loss /= num_epochs_float
-        fold_val_accuracy /= num_epochs_float
+        if scheduler is not None:
+            scheduler.step()
 
-        total_train_loss += fold_train_loss
-        total_train_accuracy += fold_train_accuracy
-        total_val_loss += fold_val_loss
-        total_val_accuracy += fold_val_accuracy
-
-        writer.add_scalar(f"Fold_{fold+1}/Average Training Loss", fold_train_loss, fold+1)
-        writer.add_scalar(f"Fold_{fold+1}/Average Training Accuracy", fold_train_accuracy, fold+1)
-        writer.add_scalar(f"Fold_{fold+1}/Average Validation Loss", fold_val_loss, fold+1)
-        writer.add_scalar(f"Fold_{fold+1}/Average Validation Accuracy", fold_val_accuracy, fold+1)
-
-    # Calcul des moyennes globales sur tous les plis
-    num_folds_float = float(len(train_loaders))
-    avg_train_loss = total_train_loss / num_folds_float
-    avg_train_accuracy = total_train_accuracy / num_folds_float
-    avg_val_loss = total_val_loss / num_folds_float
-    avg_val_accuracy = total_val_accuracy / num_folds_float
-
-    writer.add_scalar("Global/Average Training Loss", avg_train_loss, 0)
-    writer.add_scalar("Global/Average Training Accuracy", avg_train_accuracy, 0)
-    writer.add_scalar("Global/Average Validation Loss", avg_val_loss, 0)
-    writer.add_scalar("Global/Average Validation Accuracy", avg_val_accuracy, 0)
-
-    best_model_state = torch.load(model_path)
-    model.load_state_dict(best_model_state)
+        if epoch_val_accuracy > best_val_accuracy:
+            best_val_accuracy = epoch_val_accuracy
+            torch.save(model.state_dict(), model_path)
+            print(f"Best model saved at {epoch} with an accuracy of {best_val_accuracy:.4f}")
 
     return model
 
@@ -258,12 +253,12 @@ def make_submission_csv(
     print(f"Submission saved in {submission_csv_path}.")
 
 
-def main():
-    name = "1_layer_features+resnet-3_layers"
-    input_type = "image_and_features"
+def experiment(name, input_type, train_batch_size, data_augmentation, use_k_fold, n_splits, num_epochs):
+    name = name
+    input_type = input_type
 
     dirname = build_dirname(name, input_type)
-    train_loader, val_loader, test_loader, species = get_data_loaders(32, use_k_fold=True, n_splits= 5)
+    train_loader, val_loader, test_loader, species = get_data_loaders(train_batch_size=train_batch_size, data_augmentation=data_augmentation, use_k_fold=use_k_fold, n_splits= n_splits)
     model = LightModel()
     optimizer = optim.AdamW(model.parameters())
     scheduler = LambdaLR(
@@ -279,11 +274,16 @@ def main():
         train_loader,
         val_loader,
         scheduler,
-        num_epochs=25,
+        num_epochs=num_epochs,
         dirname=dirname,
     )
     make_submission_csv(model, test_loader, species, dirname)
 
+def main():
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "batch_size32", train_batch_size=32, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=200)
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "batch_size64", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=200)
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "batch_size128", train_batch_size=128, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=200)
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "batch_size256", train_batch_size=256, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=200)
 
 if __name__ == "__main__":
     main()

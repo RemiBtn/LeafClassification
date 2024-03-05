@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 import torchvision.transforms.v2 as v2
 from PIL import Image
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, TensorDataset, Subset, ConcatDataset
 
@@ -146,15 +146,19 @@ def get_data_loaders(
         collate_fn = None
     
     if use_k_fold:
-        kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+        train_df, _, test_df, species = load_csv(data_dir, test_size=None, random_state=random_state)
+
+        full_train_dataset = build_tensor_dataset(train_df, img_size)
+        
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         train_loaders = []
         val_loaders = []
 
-        for train_idx, val_idx in kf.split(train_df):
-            train_subset = Subset(train_dataset, train_idx)
-            val_subset = Subset(val_dataset, val_idx)
-            print("Taille du pli d'entraînement:", len(train_subset))
-            print("Taille du pli de validation:", len(train_subset))
+        labels = train_df['species'].values
+        
+        for train_idx, val_idx in skf.split(np.zeros(len(labels)), labels): 
+            train_subset = Subset(full_train_dataset, train_idx)
+            val_subset = Subset(full_train_dataset, val_idx)
 
             train_loader = DataLoader(
                 train_subset,
@@ -166,7 +170,8 @@ def get_data_loaders(
             val_loader = DataLoader(val_subset, batch_size=test_batch_size)
             train_loaders.append(train_loader)
             val_loaders.append(val_loader)
-        
+
+        # Le DataLoader pour le test reste inchangé
         test_data_loader = DataLoader(test_dataset, batch_size=test_batch_size)
         return train_loaders, val_loaders, test_data_loader, species
     else:
