@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import os
 import time
+from typing import List, Union
 
 import numpy as np
 import pandas as pd
@@ -8,14 +10,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import tqdm
+from sklearn.model_selection import KFold
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.model_selection import KFold
 
 from load_data import get_data_loaders
-from models import LightModel, MixedInputModel, DeepModelA
-from typing import List, Union
+from models import DeepModelA, LightModel, MixedInputModel
+from visualize_cnn_features import CNNNet
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -41,7 +43,12 @@ def build_dirname(
 
 
 def training_loop(
-    model: nn.Module, optimizer: optim.Optimizer, train_loader: DataLoader, criterion, include_images: bool, include_features: List[str]
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    train_loader: DataLoader,
+    criterion,
+    include_images: bool,
+    include_features: List[str],
 ) -> tuple[float, float]:
     model.train()
     n_samples = 0
@@ -76,9 +83,13 @@ def training_loop(
             if images is not None and features is not None:
                 probability_logits = model(image=images, features=features)
             elif images is not None:
-                probability_logits = model(image=images)  # Assuming your model can handle this case
+                probability_logits = model(
+                    image=images
+                )  # Assuming your model can handle this case
             elif features is not None:
-                probability_logits = model(features=features)  # Assuming your model can handle this case
+                probability_logits = model(
+                    features=features
+                )  # Assuming your model can handle this case
 
             loss = criterion(probability_logits, labels)
             loss.backward()
@@ -100,7 +111,11 @@ def training_loop(
 
 
 def validation_loop(
-    model: nn.Module, val_loader: DataLoader, criterion, include_images: bool, include_features: List[str] or None
+    model: nn.Module,
+    val_loader: DataLoader,
+    criterion,
+    include_images: bool,
+    include_features: List[str] or None,
 ) -> tuple[float, float]:
     model.eval()
     n_samples = 0
@@ -134,9 +149,13 @@ def validation_loop(
                 if images is not None and features is not None:
                     probability_logits = model(image=images, features=features)
                 elif images is not None:
-                    probability_logits = model(image=images)  # Ensure your model supports this call
+                    probability_logits = model(
+                        image=images
+                    )  # Ensure your model supports this call
                 elif features is not None:
-                    probability_logits = model(features=features)  # Ensure your model supports this call
+                    probability_logits = model(
+                        features=features
+                    )  # Ensure your model supports this call
 
                 loss = criterion(probability_logits, labels)
                 _, predicted_labels = torch.max(probability_logits, 1)
@@ -164,11 +183,10 @@ def train_model(
     num_epochs: int = 100,
     criterion=nn.CrossEntropyLoss(),
     dirname: str | None = None,
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"), 
-    include_images: bool = True, 
-    include_features: List[str] = ['margin', 'shape', 'texture']
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    include_images: bool = True,
+    include_features: List[str] = ["margin", "shape", "texture"],
 ) -> nn.Module:
-
     if dirname is None:
         dirname = time.strftime("%Y%m%d-%H%M%S")
     metrics_dir = os.path.join("..", "runs", "metrics", dirname)
@@ -183,7 +201,12 @@ def train_model(
         train_loaders = [train_loaders]
         val_loaders = [val_loaders]
 
-    total_train_loss, total_val_loss, total_train_accuracy, total_val_accuracy = 0, 0, 0, 0
+    total_train_loss, total_val_loss, total_train_accuracy, total_val_accuracy = (
+        0,
+        0,
+        0,
+        0,
+    )
 
     # for name, param in model.named_parameters():
     #     writer.add_histogram(f'Weights/{name}', param, 0)
@@ -195,29 +218,44 @@ def train_model(
     for epoch in range(1, num_epochs + 1):
         epoch_train_loss, epoch_train_accuracy = 0.0, 0.0
         epoch_val_loss, epoch_val_accuracy = 0.0, 0.0
-        
-        for fold, (train_loader, val_loader) in enumerate(zip(train_loaders, val_loaders)):
+
+        for fold, (train_loader, val_loader) in enumerate(
+            zip(train_loaders, val_loaders)
+        ):
             train_loss, train_accuracy = training_loop(
-                model, optimizer, train_loader, criterion, include_images=include_images,include_features=include_features)
+                model,
+                optimizer,
+                train_loader,
+                criterion,
+                include_images=include_images,
+                include_features=include_features,
+            )
             epoch_train_loss += train_loss
             epoch_train_accuracy += train_accuracy
 
             val_loss, val_accuracy = validation_loop(
-                model, val_loader, criterion, include_images=include_images, include_features=include_features)
+                model,
+                val_loader,
+                criterion,
+                include_images=include_images,
+                include_features=include_features,
+            )
             epoch_val_loss += val_loss
             epoch_val_accuracy += val_accuracy
-            
+
         epoch_train_loss /= len(train_loaders)
         epoch_train_accuracy /= len(train_loaders)
         epoch_val_loss /= len(val_loaders)
         epoch_val_accuracy /= len(val_loaders)
-        
+
         writer.add_scalar("Loss/Train", epoch_train_loss, epoch)
         writer.add_scalar("Accuracy/Train", epoch_train_accuracy, epoch)
         writer.add_scalar("Loss/Validation", epoch_val_loss, epoch)
         writer.add_scalar("Accuracy/Validation", epoch_val_accuracy, epoch)
-        
-        print(f"Epoch {epoch}/{num_epochs} - Loss Train: {epoch_train_loss:.4f}, Acc Train: {epoch_train_accuracy:.4f}, Loss Val: {epoch_val_loss:.4f}, Acc Val: {epoch_val_accuracy:.4f}")
+
+        print(
+            f"Epoch {epoch}/{num_epochs} - Loss Train: {epoch_train_loss:.4f}, Acc Train: {epoch_train_accuracy:.4f}, Loss Val: {epoch_val_loss:.4f}, Acc Val: {epoch_val_accuracy:.4f}"
+        )
 
         # if epoch%20==0:
         #     for name, param in model.named_parameters():
@@ -233,7 +271,9 @@ def train_model(
         if epoch_val_accuracy > best_val_accuracy:
             best_val_accuracy = epoch_val_accuracy
             torch.save(model.state_dict(), model_path)
-            print(f"Best model saved at {epoch} with an accuracy of {best_val_accuracy:.4f}")
+            print(
+                f"Best model saved at {epoch} with an accuracy of {best_val_accuracy:.4f}"
+            )
 
     return model
 
@@ -244,7 +284,7 @@ def make_submission_csv(
     species: np.ndarray,
     dirname: str | None = None,
     include_images: bool = True,
-    include_features: List[str] or None = None
+    include_features: List[str] or None = None,
 ):
     print()
     time.sleep(0.01)  # avoid display issues with tqdm
@@ -271,11 +311,15 @@ def make_submission_csv(
             elif include_images:
                 images, sample_ids = batch
                 images = images.to(device)
-                probability_logits = model(image=images)  # Ensure your model supports this call
+                probability_logits = model(
+                    image=images
+                )  # Ensure your model supports this call
             elif include_features is not None:
                 features, sample_ids = batch
                 features = features.to(device)
-                probability_logits = model(features=features)  # Ensure your model supports this call
+                probability_logits = model(
+                    features=features
+                )  # Ensure your model supports this call
 
             probabilities = torch.softmax(probability_logits, dim=1)
             probabilities = probabilities.cpu()
@@ -296,36 +340,40 @@ def make_submission_csv(
 
 
 def calculate_num_features(include_features: List[str]) -> int:
-    features_per_category = {'margin': 64,'shape': 64,'texture': 64 }
+    features_per_category = {"margin": 64, "shape": 64, "texture": 64}
 
     if include_features is None:
         return 0
 
-    num_features = sum(features_per_category[feature] for feature in include_features if feature in features_per_category)
+    num_features = sum(
+        features_per_category[feature]
+        for feature in include_features
+        if feature in features_per_category
+    )
     return num_features
 
 
-def experiment(name: str | None = None, 
-    input_type: str | None = None, 
-    train_batch_size: int = 64, 
-    data_augmentation: bool = True, 
-    use_k_fold: bool = True, 
-    n_splits: int = 5, 
-    num_epochs: int = 200, 
-    include_images: bool = True, 
-    include_features: List[str] = ['margin', 'shape', 'texture'],
-    model: nn.Module = None
-    ):
-
+def experiment(
+    name: str | None = None,
+    input_type: str | None = None,
+    train_batch_size: int = 64,
+    data_augmentation: bool = True,
+    use_k_fold: bool = True,
+    n_splits: int = 5,
+    num_epochs: int = 200,
+    include_images: bool = True,
+    include_features: List[str] = ["margin", "shape", "texture"],
+    model: nn.Module = None,
+):
     dirname = build_dirname(name, input_type)
     train_loader, val_loader, test_loader, species = get_data_loaders(
-        train_batch_size=train_batch_size, 
-        data_augmentation=data_augmentation, 
-        use_k_fold=use_k_fold, 
-        n_splits= n_splits,
+        train_batch_size=train_batch_size,
+        data_augmentation=data_augmentation,
+        use_k_fold=use_k_fold,
+        n_splits=n_splits,
         include_images=include_images,
-        include_features=include_features
-        )
+        include_features=include_features,
+    )
     num_features = calculate_num_features(include_features)
     model = model
     optimizer = optim.AdamW(model.parameters())
@@ -347,22 +395,45 @@ def experiment(name: str | None = None,
         include_images=include_images,
         include_features=include_features,
     )
-    make_submission_csv(model, test_loader, species, dirname, include_images=include_images, include_features=include_features)
+    make_submission_csv(
+        model,
+        test_loader,
+        species,
+        dirname,
+        include_images=include_images,
+        include_features=include_features,
+    )
+
 
 def main():
-    #experiment(name="1_layer_features+resnet-3_layers", input_type = "image_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=None)
-    #experiment(name="1_layer_features+resnet-3_layers", input_type = "features_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100,include_images=False ,include_features=['margin', 'shape', 'texture'])
-    #experiment(name="1_layer_features+resnet-3_layers", input_type = "image+margin", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=['margin'])
+    # experiment(name="1_layer_features+resnet-3_layers", input_type = "image_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=None)
+    # experiment(name="1_layer_features+resnet-3_layers", input_type = "features_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100,include_images=False ,include_features=['margin', 'shape', 'texture'])
+    # experiment(name="1_layer_features+resnet-3_layers", input_type = "image+margin", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=['margin'])
     #
-    include_features=['margin', 'shape', 'texture']
+    include_features = ["margin", "shape", "texture"]
     include_images = True
     num_features = calculate_num_features(include_features=include_features)
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "no_data_augmentation", train_batch_size=64, data_augmentation=False, use_k_fold=True, n_splits=5, 
-        num_epochs=100, include_features=include_features, include_images=include_images ,model=LightModel(include_images,num_features))
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "with_residual_block", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, 
-        num_epochs=100, include_features=include_features, include_images=include_images ,model=MixedInputModel())
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "with_deeper_cnn", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, 
-        num_epochs=100, include_features=include_features, include_images=include_images ,model=DeepModelA())
+    # experiment(name="1_layer_features+resnet-3_layers", input_type = "no_data_augmentation", train_batch_size=64, data_augmentation=False, use_k_fold=True, n_splits=5,
+    #     num_epochs=100, include_features=include_features, include_images=include_images ,model=LightModel(include_images,num_features))
+    # experiment(name="1_layer_features+resnet-3_layers", input_type = "with_residual_block", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5,
+    #     num_epochs=100, include_features=include_features, include_images=include_images ,model=MixedInputModel())
+    # experiment(name="1_layer_features+resnet-3_layers", input_type = "with_deeper_cnn", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5,
+    #     num_epochs=100, include_features=include_features, include_images=include_images ,model=DeepModelA())
+
+    # train model for features maps visualization
+    experiment(
+        name="features_maps",
+        input_type="features_maps",
+        train_batch_size=64,
+        data_augmentation=True,
+        use_k_fold=False,
+        n_splits=5,
+        num_epochs=100,
+        include_features=None,
+        include_images=True,
+        model=CNNNet(include_images, num_features),
+    )
+
 
 if __name__ == "__main__":
     main()
