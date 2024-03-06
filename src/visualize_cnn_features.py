@@ -103,7 +103,7 @@ def main():
             model.eval()
             x = test_set[nos_image]
             x = x.unsqueeze(0)
-            out = model(x)
+            out = F.softmax(model(x))
             pred = out.argmax(dim=1, keepdim=True).data.cpu().numpy()[0, 0]
             sco = out[0, pred].data.cpu().numpy()
 
@@ -111,7 +111,7 @@ def main():
             axarr_0.imshow((test_set.data[nos_image, 0]).cpu(), cmap="gray")
             fig_0.suptitle(
                 "img {} (lab={} pred={} sco={:2.3f})".format(
-                    nos_image, species[labels[nos_image]], pred, sco
+                    nos_image, species[labels[nos_image]], species[pred], sco
                 )
             )
 
