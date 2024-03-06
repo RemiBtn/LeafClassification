@@ -126,3 +126,69 @@ class LightModel(nn.Module):
         
         x_mixed = torch.cat(x_mixed, dim=1) if len(x_mixed) > 1 else x_mixed[0]
         return self.mlp(x_mixed)
+
+
+class DeepModelA(nn.Module):
+    def __init__(self, include_images=True, num_features=3*64):
+        super().__init__()
+        self.include_images = include_images
+        self.num_features = num_features
+        if include_images:
+            self.cnn = nn.Sequential(
+                nn.Conv2d(1, 16, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(16),
+                nn.GELU(),
+                nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False), # 64x64
+                nn.BatchNorm2d(16),
+                nn.GELU(),
+                nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False), # 32x32
+                nn.BatchNorm2d(16),
+                nn.GELU(),
+                nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1, bias=False), # 16x16
+                nn.BatchNorm2d(32),
+                nn.GELU(),
+                nn.Conv2d(32, 32, kernel_size=4, stride=2, padding=1, bias=False), # 8x8
+                nn.BatchNorm2d(32),
+                nn.GELU(),
+                nn.Conv2d(32, 32, kernel_size=4, stride=2, padding=1, bias=False), # 4x4
+                nn.BatchNorm2d(32),
+                nn.GELU(),
+                nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False), # Ajout pour profondeur, 4x4
+                nn.BatchNorm2d(64),
+                nn.GELU(),
+                nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, bias=False), # Ajout pour profondeur, 4x4
+                nn.BatchNorm2d(64),
+                nn.GELU(),
+                nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1, bias=False), # Ajout pour profondeur, 4x4
+                nn.BatchNorm2d(128),
+                nn.GELU(),
+            )
+        
+        total_input_size = 2048 if include_images else 0  # Ajustez selon la taille de sortie du CNN
+        total_input_size += num_features if num_features else 0
+
+        self.mlp = nn.Sequential(
+            nn.Linear(total_input_size, 512),
+            nn.GELU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
+            nn.GELU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 99),
+        )
+        
+    def forward(self, image=None, features=None):
+        x_mixed = []
+
+        if self.include_images and image is not None:
+            x_image = torch.flatten(self.cnn(image), start_dim=1)
+            x_mixed.append(x_image)
+        
+        if features is not None:
+            x_mixed.append(features)
+        
+        if not x_mixed:
+            raise ValueError("No inputs provided")
+        
+        x_mixed = torch.cat(x_mixed, dim=1) if len(x_mixed) > 1 else x_mixed[0]
+        return self.mlp(x_mixed)

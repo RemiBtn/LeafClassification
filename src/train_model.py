@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import KFold
 
 from load_data import get_data_loaders
-from models import LightModel, MixedInputModel
+from models import LightModel, MixedInputModel, DeepModelA
 from typing import List, Union
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -313,7 +313,9 @@ def experiment(name: str | None = None,
     n_splits: int = 5, 
     num_epochs: int = 200, 
     include_images: bool = True, 
-    include_features: List[str] = ['margin', 'shape', 'texture']):
+    include_features: List[str] = ['margin', 'shape', 'texture'],
+    model: nn.Module = None
+    ):
 
     dirname = build_dirname(name, input_type)
     train_loader, val_loader, test_loader, species = get_data_loaders(
@@ -325,7 +327,7 @@ def experiment(name: str | None = None,
         include_features=include_features
         )
     num_features = calculate_num_features(include_features)
-    model = LightModel(include_images=include_images,num_features=num_features)
+    model = model
     optimizer = optim.AdamW(model.parameters())
     scheduler = LambdaLR(
         optimizer,
@@ -348,10 +350,19 @@ def experiment(name: str | None = None,
     make_submission_csv(model, test_loader, species, dirname, include_images=include_images, include_features=include_features)
 
 def main():
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "image_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=None)
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "features_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100,include_images=False ,include_features=['margin', 'shape', 'texture'])
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "image+margin", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=['margin'])
-    experiment(name="1_layer_features+resnet-3_layers", input_type = "image+3features", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=['margin', 'shape', 'texture'])
+    #experiment(name="1_layer_features+resnet-3_layers", input_type = "image_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=None)
+    #experiment(name="1_layer_features+resnet-3_layers", input_type = "features_only", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100,include_images=False ,include_features=['margin', 'shape', 'texture'])
+    #experiment(name="1_layer_features+resnet-3_layers", input_type = "image+margin", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, num_epochs=100, include_features=['margin'])
+    #
+    include_features=['margin', 'shape', 'texture']
+    include_images = True
+    num_features = calculate_num_features(include_features=include_features)
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "no_data_augmentation", train_batch_size=64, data_augmentation=False, use_k_fold=True, n_splits=5, 
+        num_epochs=100, include_features=include_features, include_images=include_images ,model=LightModel(include_images,num_features))
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "with_residual_block", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, 
+        num_epochs=100, include_features=include_features, include_images=include_images ,model=MixedInputModel())
+    experiment(name="1_layer_features+resnet-3_layers", input_type = "with_deeper_cnn", train_batch_size=64, data_augmentation=True, use_k_fold=True, n_splits=5, 
+        num_epochs=100, include_features=include_features, include_images=include_images ,model=DeepModelA())
 
 if __name__ == "__main__":
     main()

@@ -35,7 +35,3 @@ def process_leaf_image(image_path, output_path):
 
 # Example usage
 process_leaf_image('data/leaf_photos/Quercus_Coccifera.jpeg', 'data/leaf_photos/Quercus_Coccifera_processed4.jpeg')
-
-#cv2.threshold(inverted_img, 120, 255, cv2.THRESH_BINARY)
-#cv2.threshold(processed_img, 120, 255, cv2.THRESH_BINARY)
-#cv2.adaptiveThreshold(processed_img, 255, cv2.ADAPTIVE_THRESH_MEAN_C,cv2.THRESH_BINARY, 11, 2)
